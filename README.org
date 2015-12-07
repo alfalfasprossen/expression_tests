@@ -1,0 +1,62 @@
+* Expression Tests
+Some tests of ideas and concepts for parsing and evaluating logical expressions.
+Currently all code here is python, but I'd like to do some C++ experiments for comparison.
+
+** Node-based approach
+What I expected to be much faster in evaluation time, was to construct a tree of nodes that evaluate their value by evaluating their children.
+I still think that it would be the best way of storing and evaluating such expressions, not to say visually editing them.
+
+To construct the tree, the text-based expression is parsed and split into its sub-expressions. Each sub-expression creates a new node, which is hashed in a dictionary. So a second expression making use of the same sub-expression will not have to re-create it.
+Also, when evaluating the nodes, theoretically, each node can cache its value until one of the lowest-level leaves (basic values) are changed. Having a cached value in a node would skip any child-evaluation and should return immediately.
+Caching though makes only sense when a lot of the basic values do not change. It also would need a system to invalidate anything upstream intelligently instead of just invalidating every node in the system (what I currently do for testing).
+
+My experimental python-implementation doesn't perform quite as well against a simple python eval() as I had expected. I wonder how well it would measure up when implemented in C++ instead.
+
+Take a look at ~expression_object.py~ for the details.
+
+** Comparison with the python eval() approach
+To execute the expressions directly as python code, all I do is to exec() the assignments for the basic values beforehand so they exist as variables in the python interpreter. To make this safe from name-clashes one could create an empty class or module and exec the basic values to members of that.
+Then I replace all the "!" in the expression with "not " and we are good to go. Calling python eval() on these strings is surprisingly fast compared to my node-based concept.
+
+Of course, my node-based code may be improved performance-wise here and there, but mainly in the initial parsing-code, which only shows its overhead once, while the python evaluation has to do the complete work every time again.
+
+In the profiling tests I made, I cleared the cached values in the nodes for each iteration. This is simulating a worst-case scenario, where the configuration that has to be evaluated has completely changed from the one before.
+
+Still, after creating the nodes, all that is left to do to evaluate a node is looping through the tree of children until single-values are found and look them up in a dictionary. The overhead this seems to create in python scales unproportionally. It will get faster than the python eval approach when using the same tree of nodes for about 100 times. In the cases I can think of what we need to evaluate every day, this is pretty surely worth it, but the problem is the exreme overhead in lower iteration counts.
+#+BEGIN_SRC
+evaluating 1 time(s)
+python eval took 0.073877
+object eval took 0.918441
+evaluating 10 time(s)
+python eval took 0.704484
+object eval took 1.384472
+evaluating 100 time(s)
+python eval took 7.023736
+object eval took 6.290077
+evaluating 1000 time(s)
+python eval took 72.537119
+object eval took 52.423359
+evaluating 10000 time(s)
+python eval took 712.356445
+object eval took 520.134543
+#+END_SRC
+
+I would have to do more precise testing, how to weigh the overhead of initially constructing the tree and which operation in the node-evaluation is the bottleneck.
+
+I'm sure that the initial construction is slow because we have to do a lot of string-parsing, which is in big parts done in pure python.
+Doing the same thing in a C-based core would be much faster. Even using pythons c-based internal functions for finding certain words in strings could be an enormous speedup. Python's ~split()~ method is about 8 times faster than a pure python-based implementation that searches through the string char by char (which is what python does under the hood on the C-side: http://svn.python.org/view/python/tags/r271/Objects/stringlib/split.h?view=markup)
+Take a look at ~profile_split.py~ to see for yourself.
+
+** Using a more elaborate python eval()
+Another idea might be to use some more intelligent python eval variant where, instead of each time evaluating a complete text-based expression, we once create a python function object which will execute the same code we would normally eval. This way we would only need to eval the function call, which should be much faster than evaluating a complete expression.
+#+BEGIN_SRC python
+exec("""
+    def _eval_func_123():
+    return A and (B or C)
+    """)
+result = eval("_eval_func_123()")
+#+END_SRC
+By creating all the basic values with exec directly in the python interpreter, we don't have to take care of anything else here. Of course we should choose auto-generated names that are sure to be unique here, instead of A, B etc.
+By only using auto-generated names, we can also make the evil eval secure against expression which would execute malicious code.
+
+I will try to implement this when I find the time.
